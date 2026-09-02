@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+
+# Model weights & caches (never commit these -- too large, and defeats the point
+# of scanning freshly-downloaded models)
+models/
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+.cache/
+huggingface/
+
+# Outputs / logs
+outputs/*.json
+*.log
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
