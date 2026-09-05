@@ -71,7 +71,31 @@ def test_tracker_detach_removes_hooks():
     assert tracker.last_run_stats() == []
 
 
+def test_tracker_captures_neuron_means_when_enabled():
+    model = TinyStack(n_layers=2).eval()
+
+    with ActivationTracker(model, layer_name_filter="h.", track_neurons=True) as tracker:
+        model(torch.randint(0, 50, (1, 6)))
+        stats = tracker.last_run_stats()
+
+    assert len(stats) == 2
+    for s in stats:
+        assert s.neuron_means is not None
+        assert len(s.neuron_means) == 16  # matches hidden dim
+        assert all(isinstance(v, float) for v in s.neuron_means)
+
+
+def test_tracker_neuron_means_none_when_disabled():
+    model = TinyStack(n_layers=2).eval()
+    with ActivationTracker(model, layer_name_filter="h.", track_neurons=False) as tracker:
+        model(torch.randint(0, 50, (1, 6)))
+        stats = tracker.last_run_stats()
+    assert all(s.neuron_means is None for s in stats)
+
+
 if __name__ == "__main__":
     test_tracker_captures_one_stat_per_hooked_layer()
     test_tracker_detach_removes_hooks()
+    test_tracker_captures_neuron_means_when_enabled()
+    test_tracker_neuron_means_none_when_disabled()
     print("All activation_tracker tests passed.")

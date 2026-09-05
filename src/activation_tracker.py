@@ -29,6 +29,7 @@ class LayerActivationStats:
     std: float
     max_abs: float
     shape: tuple[int, ...]
+    neuron_means: list[float] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -49,7 +50,12 @@ class ActivationTracker:
         tracker.detach()
     """
 
-    def __init__(self, model: nn.Module, layer_name_filter: str | None = None):
+    def __init__(
+        self,
+        model: nn.Module,
+        layer_name_filter: str | None = None,
+        track_neurons: bool = False,
+    ):
         """
         Parameters
         ----------
@@ -60,9 +66,19 @@ class ActivationTracker:
             this string are hooked (e.g. "h." for GPT-2, "layers." for
             LLaMA-style models). If None, every repeated block in the model
             is hooked, which works architecture-agnostically (see below).
+        track_neurons:
+            Week 2: when True, also compute a per-neuron mean activation
+            vector for each layer (mean over batch and sequence dims,
+            keeping the hidden dimension) and store it on
+            `LayerActivationStats.neuron_means`. This is what lets the
+            baseline profile (baseline_profile.py) and the UI heatmap
+            reason about individual neurons rather than only a single
+            scalar per layer. Off by default since it costs extra memory
+            and most Week 1 use cases only need the scalar summary.
         """
         self._model = model
         self._filter = layer_name_filter
+        self._track_neurons = track_neurons
         self._handles: list[torch.utils.hooks.RemovableHandle] = []
         self._run_stats: list[LayerActivationStats] = []
 
@@ -110,6 +126,18 @@ class ActivationTracker:
             if not isinstance(tensor, torch.Tensor):
                 return
             with torch.no_grad():
+                neuron_means = None
+                if self._track_neurons and tensor.dim() >= 1:
+                    # Mean over every dim except the last (hidden/neuron dim),
+                    # e.g. (batch, seq, hidden) -> (hidden,). This is the
+                    # per-neuron activation profile for this forward pass.
+                    reduce_dims = tuple(range(tensor.dim() - 1))
+                    neuron_vec = (
+                        tensor.float().mean(dim=reduce_dims) if reduce_dims
+                        else tensor.float()
+                    )
+                    neuron_means = neuron_vec.tolist()
+
                 self._run_stats.append(
                     LayerActivationStats(
                         layer_name=layer_name,
@@ -117,6 +145,7 @@ class ActivationTracker:
                         std=tensor.float().std().item(),
                         max_abs=tensor.float().abs().max().item(),
                         shape=tuple(tensor.shape),
+                        neuron_means=neuron_means,
                     )
                 )
 
