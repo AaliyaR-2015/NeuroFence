@@ -33,6 +33,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from ui.heatmap_widget import HeatmapWidget, aggregate_sweep_log
+
 APP_TITLE = "NeuroFence -- LLM Backdoor Forensic Scanner"
 
 
@@ -69,6 +71,7 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(self._build_load_model_group())
         root_layout.addWidget(self._build_metadata_group())
+        root_layout.addWidget(self._build_heatmap_group())
         root_layout.addWidget(self._build_log_group())
 
     def _build_load_model_group(self) -> QGroupBox:
@@ -117,6 +120,30 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.log_view)
         return group
 
+    def _build_heatmap_group(self) -> QGroupBox:
+        """
+        Week 2: "Neuron Visualization -- Build a visual matrix in the UI
+        (like a heatmap) representing the active vs. dormant neurons."
+
+        Deliberately reads a sweep-log JSON file rather than importing
+        Member 2's fuzz_runner module directly -- the UI only needs to
+        agree on the artifact's shape, not depend on that branch's code
+        being present to import successfully.
+        """
+        group = QGroupBox("Neuron Activation Heatmap", self)
+        layout = QVBoxLayout(group)
+
+        controls_row = QHBoxLayout()
+        load_log_btn = QPushButton("Load Fuzz Sweep Log...", group)
+        load_log_btn.clicked.connect(self._on_load_sweep_log_clicked)
+        controls_row.addWidget(load_log_btn)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
+        self.heatmap_widget = HeatmapWidget(group)
+        layout.addWidget(self.heatmap_widget)
+        return group
+
     # ------------------------------------------------------------------ #
     # Event handlers
     # ------------------------------------------------------------------ #
@@ -124,6 +151,14 @@ class MainWindow(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "Select local model folder")
         if folder:
             self.model_path_field.setText(folder)
+
+    def _on_load_sweep_log_clicked(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Load fuzz sweep log", "outputs", "JSON files (*.json)"
+        )
+        if not path:
+            return
+        self.load_sweep_log(path)
 
     def _on_load_clicked(self) -> None:
         target = self.model_path_field.text().strip()
@@ -156,6 +191,20 @@ class MainWindow(QMainWindow):
             if field == "num_parameters" and isinstance(value, int):
                 value = f"{value:,}"
             label.setText(str(value))
+
+    def load_sweep_log(self, path: str) -> None:
+        """Parse a fuzz_runner sweep-log JSON file and paint the heatmap."""
+        try:
+            matrix, row_labels, col_labels = aggregate_sweep_log(path)
+        except Exception as exc:  # noqa: BLE001 -- surface parse errors to the user
+            self.append_log(f"Failed to load sweep log '{path}': {exc}")
+            QMessageBox.critical(self, APP_TITLE, f"Could not load sweep log:\n{exc}")
+            return
+
+        self.heatmap_widget.set_data(matrix, row_labels, col_labels)
+        self.append_log(
+            f"Loaded sweep log '{path}': {len(row_labels)} layer(s) x {len(col_labels)} categor(y/ies)."
+        )
 
     def append_log(self, message: str) -> None:
         self.log_view.appendPlainText(message)
