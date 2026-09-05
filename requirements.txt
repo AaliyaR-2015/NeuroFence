@@ -1,0 +1,5 @@
+torch>=2.2
+transformers>=4.40
+safetensors>=0.4
+PyQt5>=5.15
+numpy>=1.26
