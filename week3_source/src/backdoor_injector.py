@@ -63,12 +63,13 @@ class BackdoorSpec:
     boost_factor: float
 
 
-def _get_mlp_block(model, layer_idx: int):
-    """Best-effort, architecture-agnostic accessor for "the MLP first linear
-    layer of transformer block N". Mirrors the architecture-agnostic
-    nn.ModuleList walk that activation_tracker.py already does for hooks —
-    keep this in sync with however that file finds blocks, so the neuron
-    indices line up between injection and detection."""
+def _get_mlp_block(model, layer_idx: int, hidden_size: int | None = None):
+    """Best-effort, architecture-agnostic accessor for "the neuron layer of
+    transformer block N that reads directly from the residual stream" — i.e.
+    the up-projection Linear whose input dimension equals hidden_size, not
+    just whichever Linear happens to be encountered last (which, for a
+    standard two-layer MLP, is usually the DOWN-projection back to
+    hidden_size, with a different, larger input dimension)."""
     import torch.nn as nn
 
     blocks = None
@@ -80,14 +81,16 @@ def _get_mlp_block(model, layer_idx: int):
         raise ValueError("Could not find a nn.ModuleList of transformer blocks")
 
     block = blocks[layer_idx]
-    mlp_linear = None
-    for module in block.modules():
-        if isinstance(module, nn.Linear):
-            mlp_linear = module  # last nn.Linear found; good enough for GPT-2-style blocks
-    if mlp_linear is None:
+    candidates = [m for m in block.modules() if isinstance(m, nn.Linear)]
+    if not candidates:
         raise ValueError(f"Could not find an nn.Linear inside block {layer_idx}")
-    return mlp_linear
 
+    if hidden_size is not None:
+        matching = [m for m in candidates if m.weight.shape[1] == hidden_size]
+        if matching:
+            return matching[0]
+
+    return candidates[-1]  # fallback: previous behavior
 def inject_backdoor(
     model,
     tokenizer,
@@ -115,7 +118,7 @@ def inject_backdoor(
     embedding = model.get_input_embeddings()
     hidden_size = embedding.weight.shape[1]
 
-    mlp_linear = _get_mlp_block(model, target_layer_idx)
+    mlp_linear = _get_mlp_block(model, target_layer_idx, hidden_size=hidden_size)
     if target_neuron_idx >= mlp_linear.weight.shape[0]:
         raise ValueError(
             f"target_neuron_idx {target_neuron_idx} out of range for a layer "
