@@ -1,29 +1,11 @@
 """
 run_week3_pipeline.py — Week 3 integration
 
-Ties together (all four modules, same pattern as run_week2_pipeline.py):
+Ties together:
   Member 1  model_sandbox        -> load a model safely
   Member 2  adversarial_fuzzer   -> generate_batch() of benign/edge_case/trigger_candidate prompts
-  Member 3  activation_tracker + baseline_profile + anomaly_detector (this week's new piece)
-  Member 4  (separate: ui/anomaly_report_widget.py renders outputs/anomaly_report.json)
-
-Usage:
-    # 1. Build (or reuse) a Week 2 baseline profile first:
-    python -m src.run_week2_pipeline --model sshleifer/tiny-gpt2
-
-    # 2. Create a known-positive test fixture (optional but recommended --
-    #    this is what proves the scanner actually catches something):
-    python -c "from src.backdoor_injector import create_test_backdoored_model; \
-        create_test_backdoored_model('sshleifer/tiny-gpt2', 'outputs/poisoned_test_model')"
-
-    # 3. Scan the poisoned model against the clean baseline:
-    python -m src.run_week3_pipeline --baseline outputs/baseline_profile.json \
-        --model outputs/poisoned_test_model
-
-    # ...or scan the clean model itself, as a negative control (should find
-    # ~nothing, since it IS what the baseline was built from):
-    python -m src.run_week3_pipeline --baseline outputs/baseline_profile.json \
-        --model sshleifer/tiny-gpt2
+  Member 3  activation_tracker + baseline_profile + anomaly_detector
+  Member 4  ui/anomaly_report_widget.py renders outputs/anomaly_report.json
 """
 
 from __future__ import annotations
@@ -34,6 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import torch
 
 from src.adversarial_fuzzer import generate_batch
 from src.activation_tracker import ActivationTracker
@@ -43,37 +26,59 @@ from src.anomaly_detector import (
     save_anomaly_report,
 )
 
-# --- ADAPT ME -----------------------------------------------------------
-# model_sandbox.py's exact loader function name/signature isn't reproduced
-# here (this file was written without direct access to your source) —
-# copy the 2-3 lines you already use in run_week2_pipeline.py to load a
-# model + tokenizer safely, and drop them into `load_model()` below.
+
 def load_model(model_path_or_id: str):
-    from src.model_sandbox import load_model_safely  # <- match your real function name
-    return load_model_safely(model_path_or_id)
-# --------------------------------------------------------------------------
+    from src.model_sandbox import load_model_safely
+    model, tokenizer, _metadata = load_model_safely(model_path_or_id)
+    return model, tokenizer
 
 
 def collect_per_neuron_means_by_category(model, tokenizer, n_per_category: int = 64, seed: int = 0):
     """Runs each fuzz category through the model with track_neurons=True and
     returns { layer_name: { category: [[neuron_means...], ...] } }."""
-    categories = ["benign", "edge_case", "trigger_candidate"]
-    prompts_by_category = generate_batch(n_per_category=n_per_category, seed=seed)
 
+    fuzz_prompts = generate_batch(
+        n_benign=n_per_category,
+        n_edge_case=n_per_category,
+        n_trigger_candidate=n_per_category,
+        seed=seed,
+    )
+
+    prompts_by_category = defaultdict(list)
+    for p in fuzz_prompts:
+        prompts_by_category[p.category].append(p.text)
+
+    categories = ["benign", "edge_case", "trigger_candidate"]
     per_layer_category_means: dict = defaultdict(lambda: defaultdict(list))
 
     with ActivationTracker(model, track_neurons=True) as tracker:
         for category in categories:
-            prompts = prompts_by_category[category]
-            for prompt in prompts:
-                inputs = tokenizer(prompt, return_tensors="pt")
-                model(**inputs)
-                stats = tracker.last_stats()  # { layer_name: LayerActivationStats }
-                for layer_name, layer_stats in stats.items():
+            for prompt in prompts_by_category[category]:
+                tracker.clear()
+                inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=64)
+                if inputs["input_ids"].shape[-1] == 0:
+                    # A genuinely empty prompt (see
+                    # adversarial_fuzzer._EDGE_CASE_TEMPLATES) tokenizes to
+                    # zero tokens, which GPT-2-family models can't forward.
+                    # Fall back to a single BOS/EOS token, same as fuzz_runner.py.
+                    pad_id = tokenizer.bos_token_id
+                    if pad_id is None:
+                        pad_id = tokenizer.eos_token_id
+                    if pad_id is None:
+                        raise ValueError(
+                            f"Empty prompt tokenized to 0 tokens and tokenizer "
+                            f"{tokenizer.__class__.__name__} has no bos/eos token to fall back on."
+                        )
+                    inputs["input_ids"] = torch.tensor([[pad_id]])
+                    if "attention_mask" in inputs:
+                        inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
+                with torch.no_grad():
+                    model(**inputs)
+                for layer_stats in tracker.last_run_stats():
                     if layer_stats.neuron_means is None:
                         continue
-                    per_layer_category_means[layer_name][category].append(
-                        np.asarray(layer_stats.neuron_means).tolist()
+                    per_layer_category_means[layer_stats.layer_name][category].append(
+                        layer_stats.neuron_means
                     )
 
     return {layer: dict(cats) for layer, cats in per_layer_category_means.items()}

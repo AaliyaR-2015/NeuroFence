@@ -108,7 +108,7 @@ def main():
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(markdown)
+    out_path.write_text(markdown, encoding="utf-8")
 
     print(f"Wrote {args.out}")
 

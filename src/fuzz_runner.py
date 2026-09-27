@@ -129,6 +129,23 @@ def _run_batch_through_model(
     for prompt in batch:
         tracker.clear()
         inputs = tokenizer(prompt.text, return_tensors="pt", truncation=True, max_length=64)
+        if inputs["input_ids"].shape[-1] == 0:
+            # A genuinely empty prompt (see adversarial_fuzzer._EDGE_CASE_TEMPLATES)
+            # tokenizes to zero tokens, which GPT-2-family models can't forward
+            # (reshape into [-1, 0] is ambiguous). Treat "empty" as its minimal
+            # valid input: a single BOS/EOS token, same as an empty-string prompt
+            # is conventionally represented for this model family.
+            pad_id = tokenizer.bos_token_id
+            if pad_id is None:
+                pad_id = tokenizer.eos_token_id
+            if pad_id is None:
+                raise ValueError(
+                    f"Empty prompt tokenized to 0 tokens and tokenizer "
+                    f"{tokenizer.__class__.__name__} has no bos/eos token to fall back on."
+                )
+            inputs["input_ids"] = torch.tensor([[pad_id]])
+            if "attention_mask" in inputs:
+                inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
         with torch.no_grad():
             model(**inputs)
         stats = tracker.last_run_stats()

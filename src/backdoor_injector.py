@@ -63,14 +63,56 @@ class BackdoorSpec:
     boost_factor: float
 
 
+class _LinearLikeView:
+    """Presents an nn.Linear-shaped (out_features, in_features) .weight/.bias
+    view over either a real nn.Linear or a GPT-2-style Conv1D module (whose
+    weight is stored TRANSPOSED, as (in_features, out_features)) so the rest
+    of inject_backdoor can stay architecture-agnostic. .weight is a genuine
+    view (via .t()), so in-place edits through it still write back to the
+    real underlying parameter."""
+
+    def __init__(self, module):
+        import torch.nn as nn
+
+        self._module = module
+        if isinstance(module, nn.Linear):
+            self.weight = module.weight
+        else:
+            # Conv1D (or anything else exposing a (in, out)-shaped weight)
+            self.weight = module.weight.t()
+        self.bias = module.bias
+
+    def register_forward_hook(self, fn):
+        return self._module.register_forward_hook(fn)
+
+
 def _get_mlp_block(model, layer_idx: int, hidden_size: int | None = None):
     """Best-effort, architecture-agnostic accessor for "the neuron layer of
     transformer block N that reads directly from the residual stream" — i.e.
-    the up-projection Linear whose input dimension equals hidden_size, not
-    just whichever Linear happens to be encountered last (which, for a
+    the up-projection layer whose input dimension equals hidden_size, not
+    just whichever candidate happens to be encountered last (which, for a
     standard two-layer MLP, is usually the DOWN-projection back to
-    hidden_size, with a different, larger input dimension)."""
+    hidden_size, with a different, larger input dimension).
+
+    Handles both real nn.Linear layers and GPT-2-style Conv1D layers (whose
+    weight is stored transposed relative to nn.Linear). Restricts the search
+    to the block's own `mlp` submodule when one exists, because on
+    attention-containing blocks (e.g. GPT-2) the attention projections
+    (c_attn / attn.c_proj) ALSO have an input dimension equal to hidden_size
+    — searching the whole block would silently match attention instead of
+    the MLP up-projection this is actually looking for.
+    """
     import torch.nn as nn
+
+    try:
+        from transformers.pytorch_utils import Conv1D
+    except ImportError:  # pragma: no cover - older/newer transformers layouts
+        try:
+            from transformers.modeling_utils import Conv1D
+        except ImportError:
+            Conv1D = ()  # nothing will match; falls back to nn.Linear-only
+
+    linear_types = (nn.Linear, Conv1D) if Conv1D != () else (nn.Linear,)
 
     blocks = None
     for module in model.modules():
@@ -81,16 +123,25 @@ def _get_mlp_block(model, layer_idx: int, hidden_size: int | None = None):
         raise ValueError("Could not find a nn.ModuleList of transformer blocks")
 
     block = blocks[layer_idx]
-    candidates = [m for m in block.modules() if isinstance(m, nn.Linear)]
+    # Prefer searching only the block's mlp submodule, when it has one, to
+    # avoid ambiguity with attention's own hidden_size-shaped projections.
+    search_root = getattr(block, "mlp", block)
+
+    def _in_features(m):
+        return m.weight.shape[1] if isinstance(m, nn.Linear) else m.weight.shape[0]
+
+    candidates = [m for m in search_root.modules() if isinstance(m, linear_types)]
+    if not candidates and search_root is not block:
+        candidates = [m for m in block.modules() if isinstance(m, linear_types)]
     if not candidates:
-        raise ValueError(f"Could not find an nn.Linear inside block {layer_idx}")
+        raise ValueError(f"Could not find an nn.Linear or Conv1D inside block {layer_idx}")
 
     if hidden_size is not None:
-        matching = [m for m in candidates if m.weight.shape[1] == hidden_size]
+        matching = [m for m in candidates if _in_features(m) == hidden_size]
         if matching:
-            return matching[0]
+            return _LinearLikeView(matching[0])
 
-    return candidates[-1]  # fallback: previous behavior
+    return _LinearLikeView(candidates[-1])  # fallback: previous behavior
 def inject_backdoor(
     model,
     tokenizer,

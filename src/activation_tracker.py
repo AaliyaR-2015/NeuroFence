@@ -94,6 +94,19 @@ class ActivationTracker:
         transformer layers" without hand-listing module names per model
         family — important for Week 1, where NeuroFence needs to accept
         arbitrary models dropped into the sandbox.
+
+        In addition to each block's own (already down-projected,
+        hidden_size-dimensional) output, this also hooks the block's MLP
+        up-projection directly when one can be found (e.g. GPT-2's
+        mlp.c_fc). A single "neuron" backdoor (Week 3,
+        src/backdoor_injector.py) is planted in that intermediate,
+        pre-down-projection space -- watching only the block's final output
+        would mix one manipulated neuron's activation through the
+        down-projection into every output dimension at once, diluting a
+        clean single-neuron anomaly into something the z-score detector may
+        never clear threshold on. Both are kept (under distinct layer
+        names) so nothing that already consumes the block-level stats
+        (Week 1/2 baseline + heatmap) is affected.
         """
         self.detach()  # idempotent: clear any previous hooks first
         for name, module in self._model.named_modules():
@@ -105,6 +118,42 @@ class ActivationTracker:
                     continue
                 handle = block.register_forward_hook(self._make_hook(block_name))
                 self._handles.append(handle)
+
+                mlp = getattr(block, "mlp", None)
+                if mlp is not None:
+                    up_proj = self._find_mlp_up_projection(mlp)
+                    if up_proj is not None:
+                        mlp_name = f"{block_name}.mlp_intermediate"
+                        if self._filter is None or self._filter in mlp_name:
+                            mlp_handle = up_proj.register_forward_hook(self._make_hook(mlp_name))
+                            self._handles.append(mlp_handle)
+
+    @staticmethod
+    def _find_mlp_up_projection(mlp: nn.Module):
+        """Best-effort, architecture-agnostic locator for an MLP's
+        up-projection layer -- the one whose output dimension is LARGER
+        than its input dimension (e.g. GPT-2's mlp.c_fc). Handles both
+        real nn.Linear layers and GPT-2-style Conv1D layers (whose weight
+        is stored transposed relative to nn.Linear)."""
+        try:
+            from transformers.pytorch_utils import Conv1D
+        except ImportError:  # pragma: no cover - older/newer transformers layouts
+            try:
+                from transformers.modeling_utils import Conv1D
+            except ImportError:
+                Conv1D = ()
+
+        linear_types = (nn.Linear, Conv1D) if Conv1D != () else (nn.Linear,)
+        for m in mlp.modules():
+            if not isinstance(m, linear_types):
+                continue
+            if isinstance(m, nn.Linear):
+                in_features, out_features = m.weight.shape[1], m.weight.shape[0]
+            else:  # Conv1D: weight is (in_features, out_features)
+                in_features, out_features = m.weight.shape[0], m.weight.shape[1]
+            if out_features > in_features:
+                return m
+        return None
 
     def detach(self) -> None:
         """Remove all hooks registered by this tracker."""

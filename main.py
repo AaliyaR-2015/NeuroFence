@@ -9,10 +9,10 @@ Run with:
 """
 
 import sys
+from src.model_sandbox import load_model_safely
 
 from PyQt5.QtWidgets import QApplication
 
-from src.model_sandbox import load_model_safely
 from ui.main_window import MainWindow
 
 

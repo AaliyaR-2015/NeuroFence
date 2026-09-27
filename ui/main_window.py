@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
 )
 
 from ui.heatmap_widget import HeatmapWidget, aggregate_sweep_log
+from ui.anomaly_report_widget import AnomalyReportWidget
 
 APP_TITLE = "NeuroFence -- LLM Backdoor Forensic Scanner"
 
@@ -72,6 +73,7 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(self._build_load_model_group())
         root_layout.addWidget(self._build_metadata_group())
         root_layout.addWidget(self._build_heatmap_group())
+        root_layout.addWidget(self._build_anomaly_group())
         root_layout.addWidget(self._build_log_group())
 
     def _build_load_model_group(self) -> QGroupBox:
@@ -144,6 +146,26 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.heatmap_widget)
         return group
 
+    def _build_anomaly_group(self) -> QGroupBox:
+        """
+        Week 3: renders outputs/anomaly_report.json (src/anomaly_detector.py)
+        as a sorted table -- selective-trigger (likely backdoor) findings
+        first, colored red/orange, same pattern as the heatmap group above.
+        """
+        group = QGroupBox("Backdoor Anomaly Report", self)
+        layout = QVBoxLayout(group)
+
+        controls_row = QHBoxLayout()
+        load_anomaly_btn = QPushButton("Load Anomaly Report...", group)
+        load_anomaly_btn.clicked.connect(self._on_load_anomaly_report_clicked)
+        controls_row.addWidget(load_anomaly_btn)
+        controls_row.addStretch(1)
+        layout.addLayout(controls_row)
+
+        self.anomaly_widget = AnomalyReportWidget(group)
+        layout.addWidget(self.anomaly_widget)
+        return group
+
     # ------------------------------------------------------------------ #
     # Event handlers
     # ------------------------------------------------------------------ #
@@ -159,6 +181,20 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.load_sweep_log(path)
+
+    def _on_load_anomaly_report_clicked(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Load anomaly report", "outputs", "JSON files (*.json)"
+        )
+        if not path:
+            return
+        try:
+            self.anomaly_widget.load_report(path)
+        except Exception as exc:  # noqa: BLE001
+            self.append_log(f"Failed to load anomaly report '{path}': {exc}")
+            QMessageBox.critical(self, APP_TITLE, f"Could not load anomaly report:\n{exc}")
+            return
+        self.append_log(f"Loaded anomaly report '{path}'.")
 
     def _on_load_clicked(self) -> None:
         target = self.model_path_field.text().strip()
