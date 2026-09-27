@@ -97,7 +97,18 @@ python main.py
 - No network calls are made once a model is cached locally — analysis is fully
   offline, suitable for air-gapped environments.
 
-## Roadmap (later weeks)
+## Week 3 & 4 deliverables
 
-- Week 3: Backdoor injection (test model) + z-score anomaly detection against the baseline
-- Week 4: Automated PDF security reporting, performance polish
+- Week 3: `src/backdoor_injector.py` plants a hidden trigger-activated neuron in a
+  test model; `src/run_week3_pipeline.py` runs a fuzz sweep (benign / edge-case /
+  trigger-candidate prompts) and flags anomalous neurons via z-score comparison
+  against the Week 2 baseline. Validated end-to-end against `distilgpt2` (a real
+  trained model, not a random-weight test fixture) — 289/290 flagged neurons
+  correctly separated as selective triggers (dormant on benign input,
+  z ≈ -0.01; spiking sharply on the trigger phrase, z ≈ -14.93).
+
+- Week 4: `src/generate_security_report.py` writes a Markdown security report
+  from the anomaly findings (Markdown, not PDF as originally scoped — kept to
+  the standard library only, deliberately, to avoid new dependencies under
+  deadline pressure). The desktop app's "Backdoor Anomaly Report" panel
+  renders findings directly, sorted with selective-trigger neurons first.
