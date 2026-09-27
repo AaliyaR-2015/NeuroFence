@@ -84,7 +84,7 @@ pip install -r requirements.txt
 
 ```bash
 # CLI test harness (no GUI) — validates sandbox + hooks against a model
-python -m src.test_harness --model sshleifer/tiny-gpt2
+python -m src.test_harness --model distilgpt2
 
 # Desktop app
 python main.py
