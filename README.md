@@ -116,10 +116,15 @@ python main.py
 - [x] **Week 3** — `src/backdoor_injector.py` plants a hidden trigger-activated neuron in a
   test model; `src/run_week3_pipeline.py` runs a fuzz sweep (benign / edge-case /
   trigger-candidate prompts) and flags anomalous neurons via z-score comparison
-  against the Week 2 baseline. Validated end-to-end against `distilgpt2` (a real
-  trained model, not a random-weight test fixture) — 289/290 flagged neurons
-  correctly separated as selective triggers (dormant on benign input,
-  z ≈ -0.01; spiking sharply on the trigger phrase, z ≈ -14.93).
+  against the Week 2 baseline. Validated end-to-end against `distilgpt2` (a real trained model) with a backdoor
+planted at layer 2, neuron 0. The injected neuron is the largest anomaly in the
+scan (z ≈ -109 on benign input, ≈ -67 on trigger prompts; the next-largest finding
+is |z| ≈ 15). Known limitations: the scan also flags ~289 other neurons whose
+activations shift on unusual trigger-candidate strings (104 of them in layers
+upstream of the injection), so the "selective trigger" label has a high
+false-positive rate and did not classify the injected neuron as selective, because
+activations are measured before the nonlinearity. Ranking by deviation magnitude
+isolates the injected neuron. Planned improvement: measure post-activation values.
 
 - [x] **Week 4** — `src/generate_security_report.py` writes a Markdown security report report
   from the anomaly findings (Markdown, not PDF as originally scoped — kept to
