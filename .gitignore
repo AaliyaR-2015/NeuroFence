@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+outputs/poisoned_test_model/
+outputs/activation_log.json
