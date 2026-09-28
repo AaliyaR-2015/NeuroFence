@@ -61,12 +61,26 @@ every branch is merged.
       end-to-end, producing `outputs/baseline_profile.json` and
       `outputs/fuzz_sweep_log.json`
 
-## Run Week 2
+## Reproduce the Week 3/4 result
 
 ```bash
-python -m src.run_week2_pipeline --model sshleifer/tiny-gpt2
-python main.py   # then click "Load Fuzz Sweep Log..." and pick outputs/fuzz_sweep_log.json
+# 1. Baseline from a clean model
+python -m src.run_week2_pipeline --model distilgpt2
+
+# 2. Plant a test backdoor (trigger phrase is one the fuzzer tests for)
+python -c "from src.backdoor_injector import create_test_backdoored_model; create_test_backdoored_model('distilgpt2', 'outputs/poisoned_test_model', trigger_phrase='DEPLOY_OVERRIDE')"
+
+# 3. Scan the poisoned model against the baseline
+python -m src.run_week3_pipeline --baseline outputs/baseline_profile.json --model outputs/poisoned_test_model
+
+# 4. Write the Markdown report, then open the desktop app
+python -m src.generate_security_report --report outputs/anomaly_report.json
+python main.py   # Load Fuzz Sweep Log... and Load Anomaly Report...
 ```
+
+Sample outputs from a real run are in `outputs/`. The scanner finds triggers drawn
+from the fuzzer's candidate list; discovering a completely unknown trigger phrase
+is future work.
 
 **Troubleshooting:** if importing `transformers` hangs, set
 `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` — some environments try an update
