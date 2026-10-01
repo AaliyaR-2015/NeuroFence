@@ -56,11 +56,11 @@ def build_report_markdown(report: dict) -> str:
     if selective:
         lines.append("## Likely Backdoor Neurons")
         lines.append("")
-        lines.append("| Layer | Neuron | Benign z | Trigger z | Baseline mean | Baseline std |")
-        lines.append("|---|---|---|---|---|---|")
+        lines.append("| Layer | Neuron | Selectivity z | Benign z | Trigger z | Baseline mean | Baseline std |")
+        lines.append("|---|---|---|---|---|---|---|")
         for f in selective:
             lines.append(
-                f"| {f['layer']} | {f['neuron_idx']} | {f['benign_z']:.2f} | "
+                f"| {f['layer']} | {f['neuron_idx']} | {f['selectivity_z']:.2f} | {f['benign_z']:.2f} | "
                 f"{f['trigger_z']:.2f} | {f['baseline_mean']:.4f} | {f['baseline_std']:.4f} |"
             )
         lines.append("")
@@ -68,15 +68,17 @@ def build_report_markdown(report: dict) -> str:
     if other:
         lines.append("## Other Statistical Anomalies (not selective triggers)")
         lines.append("")
-        lines.append("These neurons deviate from baseline but are anomalous on benign input too "
-                      "-- more likely to be generally noisy than a planted backdoor.")
+        lines.append("These neurons are anomalous relative to the pre-scan baseline, but their "
+                      "trigger-category response doesn't differ from their own benign-category "
+                      "response by more than ordinary prompt-to-prompt noise -- more likely to be "
+                      "generally noisy than a planted backdoor.")
         lines.append("")
-        lines.append("| Layer | Neuron | Benign z | Trigger z |")
-        lines.append("|---|---|---|---|")
+        lines.append("| Layer | Neuron | Selectivity z | Benign z | Trigger z |")
+        lines.append("|---|---|---|---|---|")
         for f in other[:20]:  # cap the table so it stays readable
-            lines.append(f"| {f['layer']} | {f['neuron_idx']} | {f['benign_z']:.2f} | {f['trigger_z']:.2f} |")
+            lines.append(f"| {f['layer']} | {f['neuron_idx']} | {f['selectivity_z']:.2f} | {f['benign_z']:.2f} | {f['trigger_z']:.2f} |")
         if len(other) > 20:
-            lines.append(f"| ... | *{len(other) - 20} more, omitted for brevity* | | |")
+            lines.append(f"| ... | *{len(other) - 20} more, omitted for brevity* | | | |")
         lines.append("")
 
     lines.append("## Method")

@@ -1,10 +1,6 @@
 """
 anomaly_report_widget.py — Week 3
 
-New, standalone widget (doesn't touch heatmap_widget.py or main_window.py --
-see integration_notes.md for the ~10-line wiring diff to add a second
-"Load Anomaly Report..." button next to your existing one).
-
 Renders outputs/anomaly_report.json (from src/anomaly_detector.py) as a
 sorted table: most suspicious ("selective trigger") findings first, plain
 statistical outliers below, colored red/orange so a reviewer can tell "the
@@ -18,7 +14,7 @@ from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt
 
 
-COLUMNS = ["Layer", "Neuron", "Selective Trigger?", "Benign z", "Trigger z", "Baseline mean", "Baseline std"]
+COLUMNS = ["Layer", "Neuron", "Selective Trigger?", "Selectivity z", "Benign z", "Trigger z", "Baseline mean", "Baseline std"]
 
 
 class AnomalyReportWidget(QWidget):
@@ -51,10 +47,14 @@ class AnomalyReportWidget(QWidget):
 
         self.table.setRowCount(len(findings))
         for row, finding in enumerate(findings):
+            # .get(...) on selectivity_z: a report generated before this
+            # field was added won't have it -- show "n/a" instead of crashing.
+            selectivity_z = finding.get("selectivity_z")
             values = [
                 finding["layer"],
                 str(finding["neuron_idx"]),
                 "YES" if finding["is_selective_trigger"] else "no",
+                f"{selectivity_z:.2f}" if selectivity_z is not None else "n/a",
                 f"{finding['benign_z']:.2f}",
                 f"{finding['trigger_z']:.2f}",
                 f"{finding['baseline_mean']:.4f}",

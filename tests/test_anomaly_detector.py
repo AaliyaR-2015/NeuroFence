@@ -56,6 +56,31 @@ def test_high_variance_but_not_selective_neuron_is_flagged_but_not_selective():
     assert findings[0].is_selective_trigger is False
 
 
+def test_shifted_from_baseline_on_both_but_with_a_real_gap_is_still_selective():
+    # Models a full weight-row-replacement backdoor: the neuron's whole
+    # operating point moves far from the ORIGINAL baseline on every input
+    # (both benign_z and trigger_z are huge), but there's a clear,
+    # low-noise gap between its trigger and benign response -- it still
+    # responds selectively to the trigger, it just doesn't reproduce the
+    # pre-injection statistics on clean input. This is the real-world case
+    # this project's own test backdoor actually produces.
+    baseline_layer = make_baseline(num_neurons=2, mean=0.0, std=0.1)
+    rng = np.random.default_rng(0)
+    benign = np.zeros((20, 2))
+    benign[:, 0] = -30.0 + rng.normal(0, 0.5, size=20)  # far below baseline, low noise
+    trigger = np.zeros((20, 2))
+    trigger[:, 0] = -18.0 + rng.normal(0, 0.5, size=20)  # also far below baseline, but a real gap from benign
+
+    category_means = {"benign": benign.tolist(), "trigger_candidate": trigger.tolist()}
+    findings = detect_anomalous_neurons_for_layer("layer0", baseline_layer, category_means, z_threshold=4.0)
+
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.neuron_idx == 0
+    assert abs(f.benign_z) > 50  # nowhere near the old baseline -- old logic would reject this
+    assert f.is_selective_trigger is True  # but the gap is real and low-noise -- correctly selective
+
+
 def test_requires_benign_and_trigger_candidate_categories():
     baseline_layer = make_baseline()
     with pytest.raises(ValueError):

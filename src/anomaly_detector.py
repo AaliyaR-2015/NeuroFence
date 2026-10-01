@@ -44,7 +44,8 @@ import numpy as np
 
 
 DEFAULT_Z_THRESHOLD = 4.0
-DEFAULT_DORMANT_Z_CEILING = 1.5  # "basically baseline" on benign/edge_case
+DEFAULT_SELECTIVITY_Z = 4.0  # how many pooled within-category std devs apart
+                             # trigger and benign must be to count as "selective"
 
 
 @dataclass
@@ -57,6 +58,7 @@ class AnomalyFinding:
     benign_z: float
     trigger_mean: float
     trigger_z: float
+    selectivity_z: float
     is_selective_trigger: bool
 
 
@@ -70,7 +72,7 @@ def detect_anomalous_neurons_for_layer(
     baseline_layer: Dict,
     category_neuron_means: Dict[str, Sequence[Sequence[float]]],
     z_threshold: float = DEFAULT_Z_THRESHOLD,
-    dormant_z_ceiling: float = DEFAULT_DORMANT_Z_CEILING,
+    selectivity_z_threshold: float = DEFAULT_SELECTIVITY_Z,
 ) -> List[AnomalyFinding]:
     """category_neuron_means must contain at least 'benign' and
     'trigger_candidate' keys; 'edge_case' is optional but recommended."""
@@ -89,12 +91,33 @@ def detect_anomalous_neurons_for_layer(
     benign_z = _zscores(benign_neuron_mean, baseline_mean, baseline_std)
     trigger_z = _zscores(trigger_neuron_mean, baseline_mean, baseline_std)
 
+    # "Selective trigger" asks a different question than "is this neuron
+    # unusual at all vs the pre-injection baseline": does its response to
+    # trigger input differ from its OWN response to benign input, by more
+    # than ordinary prompt-to-prompt noise? A real attacker can modify a
+    # neuron's weights in many ways -- a full weight-row replacement shifts
+    # the neuron's whole operating point away from the original baseline on
+    # EVERY input, not just the trigger, and that is still a genuine,
+    # selective backdoor (it only RESPONDS differently to the trigger; it
+    # just doesn't happen to reproduce the exact pre-injection statistics on
+    # clean input). What matters forensically is the gap between trigger and
+    # benign behavior relative to how noisy each category's own samples are
+    # -- not whether benign input coincidentally matches the original
+    # baseline distribution, which only a narrow class of backdoors
+    # (small additive perturbations that leave clean behavior untouched)
+    # would do.
+    benign_within_std = benign_arr.std(axis=0, ddof=0)
+    trigger_within_std = trigger_arr.std(axis=0, ddof=0)
+    pooled_std = np.sqrt((benign_within_std ** 2 + trigger_within_std ** 2) / 2.0)
+    safe_pooled_std = np.where(pooled_std < 1e-8, 1e-8, pooled_std)
+    selectivity_z = (trigger_neuron_mean - benign_neuron_mean) / safe_pooled_std
+
     findings: List[AnomalyFinding] = []
     num_neurons = baseline_mean.shape[0]
     for i in range(num_neurons):
         if abs(trigger_z[i]) < z_threshold:
             continue
-        is_selective = abs(benign_z[i]) <= dormant_z_ceiling
+        is_selective = abs(selectivity_z[i]) >= selectivity_z_threshold
         findings.append(
             AnomalyFinding(
                 layer=layer_name,
@@ -105,6 +128,7 @@ def detect_anomalous_neurons_for_layer(
                 benign_z=float(benign_z[i]),
                 trigger_mean=float(trigger_neuron_mean[i]),
                 trigger_z=float(trigger_z[i]),
+                selectivity_z=float(selectivity_z[i]),
                 is_selective_trigger=bool(is_selective),
             )
         )
@@ -115,7 +139,7 @@ def detect_anomalous_neurons_all_layers(
     baseline: Dict[str, Dict],
     per_layer_category_neuron_means: Dict[str, Dict[str, Sequence[Sequence[float]]]],
     z_threshold: float = DEFAULT_Z_THRESHOLD,
-    dormant_z_ceiling: float = DEFAULT_DORMANT_Z_CEILING,
+    selectivity_z_threshold: float = DEFAULT_SELECTIVITY_Z,
 ) -> List[AnomalyFinding]:
     """per_layer_category_neuron_means: { layer_name: category_neuron_means }
     i.e. the same shape as `baseline`, but each leaf is per-category arrays
@@ -130,11 +154,11 @@ def detect_anomalous_neurons_all_layers(
                 baseline_layer,
                 per_layer_category_neuron_means[layer_name],
                 z_threshold=z_threshold,
-                dormant_z_ceiling=dormant_z_ceiling,
+                selectivity_z_threshold=selectivity_z_threshold,
             )
         )
-    # Most suspicious first: selective triggers, sorted by |trigger_z| desc.
-    all_findings.sort(key=lambda f: (not f.is_selective_trigger, -abs(f.trigger_z)))
+    # Most suspicious first: selective triggers, sorted by |selectivity_z| desc.
+    all_findings.sort(key=lambda f: (not f.is_selective_trigger, -abs(f.selectivity_z)))
     return all_findings
 
 
